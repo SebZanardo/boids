@@ -4,24 +4,31 @@
 #include <stdbool.h>
 
 
-#define WINDOW_WIDTH 800
-#define WINDOW_HEIGHT 800
-#define MAX_FPS 360
+#define WINDOW_WIDTH 2048
+#define WINDOW_HEIGHT 1024
+#define MAX_FPS 0
 
-#define MAX_AREA_RADIUS 256
-
-#define NUM_BOIDS 1024
+#define NUM_BOIDS 2048
 #define BOID_SIZE 4
-#define VIEW_DISTANCE 64
+#define VIEW_DISTANCE 32
 #define VIEW_DISTANCE_SQR VIEW_DISTANCE * VIEW_DISTANCE
-#define AVOID_DISTANCE 16
+#define AVOID_DISTANCE 8
 #define AVOID_DISTANCE_SQR AVOID_DISTANCE * AVOID_DISTANCE
 #define VIEW_DOT_PRODUCT -0.6
 #define SEPARATION_CONSTANT 0.05
 #define ALIGNMENT_CONSTANT 0.02
 #define COHESION_CONSTANT 0.03
-#define AVOIDANCE_CONSTANT 5
+#define AVOIDANCE_CONSTANT 10
 #define MOVE_SPEED 0.3
+
+#define MAX_AREA_RADIUS 256
+#define AREA_SIZE_CHANGE 10
+
+#define GRID_HALF_SIZE VIEW_DISTANCE
+#define GRID_SIZE GRID_HALF_SIZE * 2
+#define GRID_WIDTH WINDOW_WIDTH / GRID_SIZE
+#define GRID_HEIGHT WINDOW_HEIGHT / GRID_SIZE
+#define GRID_CELLS GRID_WIDTH * GRID_HEIGHT
 
 
 typedef struct {
@@ -40,8 +47,20 @@ int main(void)
 
     Boid boids[NUM_BOIDS] = {};
 
-    int i = 0;
-    for (i = 0; i < NUM_BOIDS; i++) {
+    // Using a linked list would make using SIMD impossible but, hopefully,
+    //  should heavily reduce number of collision checks between boids from.
+    //  time: O(n^2), space: O(n) -->
+    //  time: O(n), space: O(n) but n's of higher magnitudes
+    // An alternative or addition to this would be multithreading but I would
+    //  like to keep processing to one thread for compatability and simplicity.
+    int links[NUM_BOIDS] = {};
+    int link_heads[GRID_CELLS] = {};
+
+    for (int i = 0; i < GRID_CELLS; i++) {
+        link_heads[i] = -1;
+    }
+
+    for (int i = 0; i < NUM_BOIDS; i++) {
         Vector2 position = (Vector2) {
             GetRandomValue(0, WINDOW_WIDTH),
             GetRandomValue(0, WINDOW_HEIGHT)
@@ -51,11 +70,28 @@ int main(void)
             GetRandomValue(-64, 64)
         });
         boids[i] = (Boid) {position, direction};
+
+        int x_grid = position.x / GRID_WIDTH;
+        int y_grid = position.y / GRID_HEIGHT;
+        int i_grid = y_grid * GRID_WIDTH + x_grid;
+
+        if (link_heads[i_grid] == -1) {
+            link_heads[i_grid] = i;
+            links[i] = -1;
+        } else {
+            // Insert at head because easier
+            links[i] = link_heads[i_grid];
+            link_heads[i_grid] = i;
+        }
     }
 
     Vector2 offscreen = (Vector2) {-WINDOW_WIDTH, -WINDOW_HEIGHT};
     Vector2 area_position = offscreen;
     bool is_area_attract = false;
+
+    Vector2 average_positions[NUM_BOIDS] = {};
+    Vector2 average_directions[NUM_BOIDS] = {};
+    Vector2 average_separations[NUM_BOIDS] = {};
 
     while (!WindowShouldClose()) {
         // Update area
@@ -67,7 +103,7 @@ int main(void)
 
         float mouse_wheel = GetMouseWheelMove();
         if (mouse_wheel) {
-            area_radius += mouse_wheel * 5;
+            area_radius += mouse_wheel * AREA_SIZE_CHANGE;
             area_radius = Clamp(area_radius, 0, MAX_AREA_RADIUS);
         }
         if (IsMouseButtonPressed(0)) {
@@ -75,33 +111,76 @@ int main(void)
         }
 
         // Update Boids
-        Vector2 average_positions[NUM_BOIDS] = {};
-        Vector2 average_directions[NUM_BOIDS] = {};
-        Vector2 average_separations[NUM_BOIDS] = {};
-        for (i = 0; i < NUM_BOIDS; i++) {
-            int count = 0;
-            int separation_count = 0;
-            Vector2 average_position = Vector2Zero();
-            Vector2 average_direction = Vector2Zero();
-            Vector2 average_separation = Vector2Zero();
-            for (int j = 0; j < NUM_BOIDS; j++) {
-                if (i == j) continue;
-                float distance_sqr = Vector2DistanceSqr(boids[i].position, boids[j].position);
-                if (distance_sqr > VIEW_DISTANCE_SQR) continue;
-                if (Vector2DotProduct(boids[i].position, boids[j].position) < VIEW_DOT_PRODUCT) continue;
-                average_position = Vector2Add(average_position, boids[j].position);
-                average_direction = Vector2Add(average_direction, boids[j].direction);
-                count++;
-                if (distance_sqr > VIEW_DISTANCE_SQR) continue;
-                average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(boids[i].position, boids[j].position), 1.0f / distance_sqr));
-                separation_count++;
+        for (int i = 0; i < GRID_CELLS; i++) {
+            if (link_heads[i] == -1) continue;
+
+            int current = link_heads[i];
+            while (current != -1) {
+                Boid b1 = boids[current];
+
+                // TODO: For accuracy check surrounding grid cells and perform
+                //  calculations. Currently just checking withing cell.
+
+                // Calculate surrounding grid cells
+                int x_grid = b1.position.x / GRID_SIZE;
+                int y_grid = b1.position.y / GRID_SIZE;
+
+                int horizontal = 0;  // -1, 0 , 1
+                int vertical = 0;  // -1, 0 , 1
+                int remaining_x = b1.position.x - x_grid * GRID_SIZE;
+                int remaining_y = b1.position.y - y_grid * GRID_SIZE;
+
+                if (remaining_x > GRID_HALF_SIZE) horizontal++;
+                else if (remaining_x < GRID_HALF_SIZE) horizontal--;
+                if (remaining_y > GRID_HALF_SIZE) vertical++;
+                else if (remaining_y < GRID_HALF_SIZE) vertical--;
+
+                int count = 0;
+                int separation_count = 0;
+                Vector2 average_position = Vector2Zero();
+                Vector2 average_direction = Vector2Zero();
+                Vector2 average_separation = Vector2Zero();
+
+                int inside = link_heads[i];
+                while ((inside != -1)) {
+                    if (inside == current) {
+                        inside = links[inside];
+                        continue;
+                    }
+                    Boid b2 = boids[inside];
+
+                    float distance_sqr = Vector2DistanceSqr(b1.position, b2.position);
+                    if (distance_sqr > VIEW_DISTANCE_SQR) {
+                        inside = links[inside];
+                        continue;
+                    }
+                    if (Vector2DotProduct(b1.position, b2.position) < VIEW_DOT_PRODUCT) {
+                        inside = links[inside];
+                        continue;
+                    }
+                    average_position = Vector2Add(average_position, b2.position);
+                    average_direction = Vector2Add(average_direction, b2.direction);
+                    count++;
+                    if (distance_sqr > VIEW_DISTANCE_SQR) {
+                        inside = links[inside];
+                        continue;
+                    }
+                    average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(b1.position, b2.position), 1.0f / distance_sqr));
+                    separation_count++;
+
+                    inside = links[inside];
+                }
+
+                average_positions[current] = Vector2Scale(average_position, 1.0f / count);
+                average_directions[current] = Vector2Normalize(Vector2Scale(average_direction, 1.0f / count));
+                average_separations[current] = Vector2Normalize(Vector2Scale(average_separation, 1.0f / separation_count));
+
+                current = links[current];
             }
-            average_positions[i] = Vector2Scale(average_position, 1.0f / count);
-            average_directions[i] = Vector2Normalize(Vector2Scale(average_direction, 1.0f / count));
-            average_separations[i] = Vector2Normalize(Vector2Scale(average_separation, 1.0f / separation_count));
         }
 
-        for (i = 0; i < NUM_BOIDS; i++) {
+        // Move the boids
+        for (int i = 0; i < NUM_BOIDS; i++) {
             // Separation
             Vector2 separation = Vector2Scale(Vector2Normalize(Vector2Subtract(average_separations[i], boids[i].direction)), -SEPARATION_CONSTANT);
 
@@ -131,18 +210,76 @@ int main(void)
             boids[i].position.y = Wrap(boids[i].position.y, 0, WINDOW_HEIGHT);
         }
 
+        // Update boids linked list
+        for (int i = 0; i < GRID_CELLS; i++) {
+            if (link_heads[i] == -1) continue;
+            int current = link_heads[i];
+            while (current != -1) {
+                Boid b = boids[current];
+
+                int x_grid = b.position.x / GRID_WIDTH;
+                int y_grid = b.position.y / GRID_HEIGHT;
+                int i_grid = y_grid * GRID_WIDTH + x_grid;
+
+                // Boid still in valid grid cell
+                if (i == i_grid) {
+                    current = links[current];
+                    continue;
+                }
+
+                // We gotta move the boid from this linked list to another
+                // Move to head of other linked list for simplicity
+                int next = links[current];
+
+                // Move head
+                if (current == link_heads[i]) {
+                    // Current points to new head
+                    links[current] = link_heads[i_grid];
+                    // Head is now current of correct grid cell
+                    link_heads[i_grid] = current;
+
+                    // Set head of cell that left to be what head was pointing
+                    //  to, if -1 fine.
+                    link_heads[i] = links[current];
+                } else {
+                    int redundant = links[current];
+                    // Patch up link, set current to be next
+                    links[current] = links[links[current]];
+
+                    // Redundant link points to new head, -1 is fine.
+                    links[redundant] = link_heads[i_grid];
+                    // Head is now current of correct grid cell
+                    link_heads[i_grid] = redundant;
+                }
+                current = next;
+            }
+        }
+
+        // RENDERING
         BeginDrawing();
         ClearBackground(BLACK);
-        for (i = 0; i < NUM_BOIDS; i++) {
+        // Draw grid
+        for (int y = 0; y < GRID_HEIGHT; y++) {
+            for (int x = 0; x < GRID_WIDTH; x++) {
+                Rectangle rect = (Rectangle) {
+                    x * GRID_SIZE,
+                    y * GRID_SIZE,
+                    GRID_SIZE,
+                    GRID_SIZE
+                };
+                DrawRectangleLinesEx(rect, 1, WHITE);
+            }
+        }
+
+        // Draw boids
+        for (int i = 0; i < NUM_BOIDS; i++) {
             /*DrawCircleLinesV(boids[i].position, VIEW_DISTANCE, GREEN);*/
-            /*DrawCircleLinesV(boids[i].position, AVOID_DISTANCE, RED);*/
-            /*DrawLineV(boids[i].position, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, 32)), BLUE);*/
+            /*DrawCircleLinesV(boids[i].position, AVOID_DISTANCE, BLUE);*/
+            /*DrawLineV(boids[i].position, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), BLUE);*/
             /*DrawCircleV(boids[i].position, BOID_SIZE, MAGENTA);*/
             DrawTriangleLines((Vector2) {boids[i].position.x - 8, boids[i].position.y + 4}, (Vector2) {boids[i].position.x + 8, boids[i].position.y + 4}, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), MAGENTA);
         }
-
         DrawCircleLinesV(area_position, area_radius, is_area_attract ? BLUE : RED);
-
         EndDrawing();
 
         DrawFPS(0, 0);
