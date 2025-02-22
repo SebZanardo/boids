@@ -8,16 +8,16 @@
 #define WINDOW_HEIGHT 1024
 #define MAX_FPS 0
 
-#define NUM_BOIDS 2048
+#define NUM_BOIDS 1024
 #define BOID_SIZE 4
-#define VIEW_DISTANCE 32
-#define VIEW_DISTANCE_SQR VIEW_DISTANCE * VIEW_DISTANCE
-#define AVOID_DISTANCE 8
-#define AVOID_DISTANCE_SQR AVOID_DISTANCE * AVOID_DISTANCE
+#define VIEW_DISTANCE 64
+#define VIEW_DISTANCE_SQR (VIEW_DISTANCE * VIEW_DISTANCE)
+#define AVOID_DISTANCE 16
+#define AVOID_DISTANCE_SQR (AVOID_DISTANCE * AVOID_DISTANCE)
 #define VIEW_DOT_PRODUCT -0.6
-#define SEPARATION_CONSTANT 0.05
-#define ALIGNMENT_CONSTANT 0.02
-#define COHESION_CONSTANT 0.03
+#define SEPARATION_CONSTANT 0.03  //0.03
+#define ALIGNMENT_CONSTANT 0.01  //0.01
+#define COHESION_CONSTANT 0.05  //0.05
 #define AVOIDANCE_CONSTANT 10
 #define MOVE_SPEED 0.3
 
@@ -25,10 +25,10 @@
 #define AREA_SIZE_CHANGE 10
 
 #define GRID_HALF_SIZE VIEW_DISTANCE
-#define GRID_SIZE GRID_HALF_SIZE * 2
-#define GRID_WIDTH WINDOW_WIDTH / GRID_SIZE
-#define GRID_HEIGHT WINDOW_HEIGHT / GRID_SIZE
-#define GRID_CELLS GRID_WIDTH * GRID_HEIGHT
+#define GRID_SIZE (GRID_HALF_SIZE * 2)
+#define GRID_WIDTH (WINDOW_WIDTH / GRID_SIZE)
+#define GRID_HEIGHT (WINDOW_HEIGHT / GRID_SIZE)
+#define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
 
 
 typedef struct {
@@ -71,8 +71,8 @@ int main(void)
         });
         boids[i] = (Boid) {position, direction};
 
-        int x_grid = position.x / GRID_WIDTH;
-        int y_grid = position.y / GRID_HEIGHT;
+        int x_grid = (int) position.x / GRID_SIZE;
+        int y_grid = (int) position.y / GRID_SIZE;
         int i_grid = y_grid * GRID_WIDTH + x_grid;
 
         if (link_heads[i_grid] == -1) {
@@ -84,6 +84,14 @@ int main(void)
             link_heads[i_grid] = i;
         }
     }
+    /*for (int i = 0; i < GRID_CELLS; i++) {*/
+    /*    printf("%d, ", link_heads[i]);*/
+    /*}*/
+    /*printf("\n");*/
+    /*for (int i = 0; i < NUM_BOIDS; i++) {*/
+    /*    printf("%d, ", links[i]);*/
+    /*}*/
+    /*printf("\n");*/
 
     Vector2 offscreen = (Vector2) {-WINDOW_WIDTH, -WINDOW_HEIGHT};
     Vector2 area_position = offscreen;
@@ -116,19 +124,17 @@ int main(void)
 
             int current = link_heads[i];
             while (current != -1) {
-                Boid b1 = boids[current];
-
                 // TODO: For accuracy check surrounding grid cells and perform
                 //  calculations. Currently just checking withing cell.
 
                 // Calculate surrounding grid cells
-                int x_grid = b1.position.x / GRID_SIZE;
-                int y_grid = b1.position.y / GRID_SIZE;
+                int x_grid = (int) boids[current].position.x / GRID_SIZE;
+                int y_grid = (int) boids[current].position.y / GRID_SIZE;
 
                 int horizontal = 0;  // -1, 0 , 1
                 int vertical = 0;  // -1, 0 , 1
-                int remaining_x = b1.position.x - x_grid * GRID_SIZE;
-                int remaining_y = b1.position.y - y_grid * GRID_SIZE;
+                int remaining_x = (int) boids[current].position.x - x_grid * GRID_SIZE;
+                int remaining_y = (int) boids[current].position.y - y_grid * GRID_SIZE;
 
                 if (remaining_x > GRID_HALF_SIZE) horizontal++;
                 else if (remaining_x < GRID_HALF_SIZE) horizontal--;
@@ -147,25 +153,19 @@ int main(void)
                         inside = links[inside];
                         continue;
                     }
-                    Boid b2 = boids[inside];
-
-                    float distance_sqr = Vector2DistanceSqr(b1.position, b2.position);
+                    float distance_sqr = Vector2DistanceSqr(boids[current].position, boids[inside].position);
                     if (distance_sqr > VIEW_DISTANCE_SQR) {
                         inside = links[inside];
                         continue;
                     }
-                    if (Vector2DotProduct(b1.position, b2.position) < VIEW_DOT_PRODUCT) {
+                    if (Vector2DotProduct(boids[current].position, boids[inside].position) < VIEW_DOT_PRODUCT) {
                         inside = links[inside];
                         continue;
                     }
-                    average_position = Vector2Add(average_position, b2.position);
-                    average_direction = Vector2Add(average_direction, b2.direction);
+                    average_position = Vector2Add(average_position, boids[inside].position);
+                    average_direction = Vector2Add(average_direction, boids[inside].direction);
                     count++;
-                    if (distance_sqr > VIEW_DISTANCE_SQR) {
-                        inside = links[inside];
-                        continue;
-                    }
-                    average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(b1.position, b2.position), 1.0f / distance_sqr));
+                    average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(boids[current].position, boids[inside].position), 1.0f / distance_sqr));
                     separation_count++;
 
                     inside = links[inside];
@@ -213,12 +213,11 @@ int main(void)
         // Update boids linked list
         for (int i = 0; i < GRID_CELLS; i++) {
             if (link_heads[i] == -1) continue;
+
             int current = link_heads[i];
             while (current != -1) {
-                Boid b = boids[current];
-
-                int x_grid = b.position.x / GRID_WIDTH;
-                int y_grid = b.position.y / GRID_HEIGHT;
+                int x_grid = (int) boids[current].position.x / GRID_SIZE;
+                int y_grid = (int) boids[current].position.y / GRID_SIZE;
                 int i_grid = y_grid * GRID_WIDTH + x_grid;
 
                 // Boid still in valid grid cell
@@ -229,29 +228,29 @@ int main(void)
 
                 // We gotta move the boid from this linked list to another
                 // Move to head of other linked list for simplicity
-                int next = links[current];
 
                 // Move head
                 if (current == link_heads[i]) {
+                    link_heads[i] = links[current];
+
                     // Current points to new head
                     links[current] = link_heads[i_grid];
                     // Head is now current of correct grid cell
                     link_heads[i_grid] = current;
 
-                    // Set head of cell that left to be what head was pointing
-                    //  to, if -1 fine.
-                    link_heads[i] = links[current];
+                    current = link_heads[i];
                 } else {
-                    int redundant = links[current];
+                    int old = links[current];
                     // Patch up link, set current to be next
-                    links[current] = links[links[current]];
+                    links[current] = links[old];
 
                     // Redundant link points to new head, -1 is fine.
-                    links[redundant] = link_heads[i_grid];
+                    links[old] = link_heads[i_grid];
                     // Head is now current of correct grid cell
-                    link_heads[i_grid] = redundant;
+                    link_heads[i_grid] = old;
+
+                    current = links[current];
                 }
-                current = next;
             }
         }
 
