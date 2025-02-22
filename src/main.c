@@ -1,3 +1,7 @@
+// TODO: 
+// 1. Make code easy to run from source code.
+// 2. Split this into header and another C file ready to be used elsewhere.
+//
 // https://www.red3d.com/cwr/boids/
 #include "raylib.h"
 #include "raymath.h"
@@ -7,17 +11,18 @@
 #define WINDOW_WIDTH 2048
 #define WINDOW_HEIGHT 1024
 #define MAX_FPS 0
+// TODO: Implement fixed dt
 
-#define NUM_BOIDS 1024
-#define BOID_SIZE 4
-#define VIEW_DISTANCE 64
+#define NUM_BOIDS 131072
+#define BOID_SIZE 1
+#define VIEW_DISTANCE 2
 #define VIEW_DISTANCE_SQR (VIEW_DISTANCE * VIEW_DISTANCE)
-#define AVOID_DISTANCE 16
+#define AVOID_DISTANCE 1
 #define AVOID_DISTANCE_SQR (AVOID_DISTANCE * AVOID_DISTANCE)
 #define VIEW_DOT_PRODUCT -0.6
-#define SEPARATION_CONSTANT 0.03  //0.03
-#define ALIGNMENT_CONSTANT 0.01  //0.01
-#define COHESION_CONSTANT 0.05  //0.05
+#define SEPARATION_CONSTANT 0.03
+#define ALIGNMENT_CONSTANT 0.01
+#define COHESION_CONSTANT 0.05
 #define AVOIDANCE_CONSTANT 10
 #define MOVE_SPEED 0.3
 
@@ -31,6 +36,7 @@
 #define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
 
 
+// TODO: Need to store velocity too
 typedef struct {
     Vector2 position;
     Vector2 direction;
@@ -53,9 +59,11 @@ int main(void)
     //  time: O(n), space: O(n) but n's of higher magnitudes
     // An alternative or addition to this would be multithreading but I would
     //  like to keep processing to one thread for compatability and simplicity.
+    //  TODO: Change to unsigned int for indexing arrays
     int links[NUM_BOIDS] = {};
     int link_heads[GRID_CELLS] = {};
 
+    // Setting up boids lists
     for (int i = 0; i < GRID_CELLS; i++) {
         link_heads[i] = -1;
     }
@@ -84,14 +92,6 @@ int main(void)
             link_heads[i_grid] = i;
         }
     }
-    /*for (int i = 0; i < GRID_CELLS; i++) {*/
-    /*    printf("%d, ", link_heads[i]);*/
-    /*}*/
-    /*printf("\n");*/
-    /*for (int i = 0; i < NUM_BOIDS; i++) {*/
-    /*    printf("%d, ", links[i]);*/
-    /*}*/
-    /*printf("\n");*/
 
     Vector2 offscreen = (Vector2) {-WINDOW_WIDTH, -WINDOW_HEIGHT};
     Vector2 area_position = offscreen;
@@ -153,6 +153,7 @@ int main(void)
                         inside = links[inside];
                         continue;
                     }
+                    // TODO: Assume that since in same cell then in range
                     float distance_sqr = Vector2DistanceSqr(boids[current].position, boids[inside].position);
                     if (distance_sqr > VIEW_DISTANCE_SQR) {
                         inside = links[inside];
@@ -258,17 +259,17 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
         // Draw grid
-        for (int y = 0; y < GRID_HEIGHT; y++) {
-            for (int x = 0; x < GRID_WIDTH; x++) {
-                Rectangle rect = (Rectangle) {
-                    x * GRID_SIZE,
-                    y * GRID_SIZE,
-                    GRID_SIZE,
-                    GRID_SIZE
-                };
-                DrawRectangleLinesEx(rect, 1, WHITE);
-            }
-        }
+        /*for (int y = 0; y < GRID_HEIGHT; y++) {*/
+        /*    for (int x = 0; x < GRID_WIDTH; x++) {*/
+        /*        Rectangle rect = (Rectangle) {*/
+        /*            x * GRID_SIZE,*/
+        /*            y * GRID_SIZE,*/
+        /*            GRID_SIZE,*/
+        /*            GRID_SIZE*/
+        /*        };*/
+        /*        DrawRectangleLinesEx(rect, 1, WHITE);*/
+        /*    }*/
+        /*}*/
 
         // Draw boids
         for (int i = 0; i < NUM_BOIDS; i++) {
@@ -276,7 +277,7 @@ int main(void)
             /*DrawCircleLinesV(boids[i].position, AVOID_DISTANCE, BLUE);*/
             /*DrawLineV(boids[i].position, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), BLUE);*/
             /*DrawCircleV(boids[i].position, BOID_SIZE, MAGENTA);*/
-            DrawTriangleLines((Vector2) {boids[i].position.x - 8, boids[i].position.y + 4}, (Vector2) {boids[i].position.x + 8, boids[i].position.y + 4}, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), MAGENTA);
+            DrawTriangleLines((Vector2) {boids[i].position.x - BOID_SIZE, boids[i].position.y + BOID_SIZE}, (Vector2) {boids[i].position.x + BOID_SIZE, boids[i].position.y + BOID_SIZE}, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), MAGENTA);
         }
         DrawCircleLinesV(area_position, area_radius, is_area_attract ? BLUE : RED);
         EndDrawing();
