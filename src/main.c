@@ -1,7 +1,3 @@
-// TODO: 
-// 1. Make code easy to run from source code.
-// 2. Split this into header and another C file ready to be used elsewhere.
-//
 // https://www.red3d.com/cwr/boids/
 #include "raylib.h"
 #include "raymath.h"
@@ -11,20 +7,19 @@
 #define WINDOW_WIDTH 2048
 #define WINDOW_HEIGHT 1024
 #define MAX_FPS 0
-// TODO: Implement fixed dt
 
-#define NUM_BOIDS 131072
-#define BOID_SIZE 1
-#define VIEW_DISTANCE 2
+#define NUM_BOIDS 100000
+#define BOID_SIZE 0.5
+#define VIEW_DISTANCE 4
 #define VIEW_DISTANCE_SQR (VIEW_DISTANCE * VIEW_DISTANCE)
 #define AVOID_DISTANCE 1
 #define AVOID_DISTANCE_SQR (AVOID_DISTANCE * AVOID_DISTANCE)
 #define VIEW_DOT_PRODUCT -0.6
-#define SEPARATION_CONSTANT 0.03
-#define ALIGNMENT_CONSTANT 0.01
-#define COHESION_CONSTANT 0.05
+#define SEPARATION_CONSTANT 0.3
+#define ALIGNMENT_CONSTANT 0.1
+#define COHESION_CONSTANT 0.01
 #define AVOIDANCE_CONSTANT 10
-#define MOVE_SPEED 0.3
+#define MOVE_SPEED 0.5
 
 #define MAX_AREA_RADIUS 256
 #define AREA_SIZE_CHANGE 10
@@ -36,7 +31,6 @@
 #define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
 
 
-// TODO: Need to store velocity too
 typedef struct {
     Vector2 position;
     Vector2 direction;
@@ -59,7 +53,6 @@ int main(void)
     //  time: O(n), space: O(n) but n's of higher magnitudes
     // An alternative or addition to this would be multithreading but I would
     //  like to keep processing to one thread for compatability and simplicity.
-    //  TODO: Change to unsigned int for indexing arrays
     int links[NUM_BOIDS] = {};
     int link_heads[GRID_CELLS] = {};
 
@@ -124,21 +117,19 @@ int main(void)
 
             int current = link_heads[i];
             while (current != -1) {
-                // TODO: For accuracy check surrounding grid cells and perform
-                //  calculations. Currently just checking withing cell.
-
                 // Calculate surrounding grid cells
                 int x_grid = (int) boids[current].position.x / GRID_SIZE;
                 int y_grid = (int) boids[current].position.y / GRID_SIZE;
 
-                int horizontal = 0;  // -1, 0 , 1
-                int vertical = 0;  // -1, 0 , 1
                 int remaining_x = (int) boids[current].position.x - x_grid * GRID_SIZE;
                 int remaining_y = (int) boids[current].position.y - y_grid * GRID_SIZE;
 
-                if (remaining_x > GRID_HALF_SIZE) horizontal++;
+                int horizontal = 0;  // -1 or 1
+                int vertical = 0;  // -1 or 1
+
+                if (remaining_x >= GRID_HALF_SIZE) horizontal++;
                 else if (remaining_x < GRID_HALF_SIZE) horizontal--;
-                if (remaining_y > GRID_HALF_SIZE) vertical++;
+                if (remaining_y >= GRID_HALF_SIZE) vertical++;
                 else if (remaining_y < GRID_HALF_SIZE) vertical--;
 
                 int count = 0;
@@ -147,29 +138,45 @@ int main(void)
                 Vector2 average_direction = Vector2Zero();
                 Vector2 average_separation = Vector2Zero();
 
-                int inside = link_heads[i];
-                while ((inside != -1)) {
-                    if (inside == current) {
-                        inside = links[inside];
-                        continue;
-                    }
-                    // TODO: Assume that since in same cell then in range
-                    float distance_sqr = Vector2DistanceSqr(boids[current].position, boids[inside].position);
-                    if (distance_sqr > VIEW_DISTANCE_SQR) {
-                        inside = links[inside];
-                        continue;
-                    }
-                    if (Vector2DotProduct(boids[current].position, boids[inside].position) < VIEW_DOT_PRODUCT) {
-                        inside = links[inside];
-                        continue;
-                    }
-                    average_position = Vector2Add(average_position, boids[inside].position);
-                    average_direction = Vector2Add(average_direction, boids[inside].direction);
-                    count++;
-                    average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(boids[current].position, boids[inside].position), 1.0f / distance_sqr));
-                    separation_count++;
+                // Check 2x2 around boid for accurate movement
+                int cell_to_check = i;
+                for (int y = 0; y != vertical * 2; y += vertical) {
+                    cell_to_check = i + GRID_WIDTH * y;
+                    for (int x = 0; x != horizontal * 2; x += horizontal) {
+                        cell_to_check += x;
 
-                    inside = links[inside];
+                        if (cell_to_check < 0 || cell_to_check >= GRID_CELLS) continue;
+
+                        int inside = link_heads[cell_to_check];
+                        while ((inside != -1)) {
+                            if (inside == current) {
+                                inside = links[inside];
+                                continue;
+                            }
+
+                            float distance_sqr = Vector2DistanceSqr(boids[current].position, boids[inside].position);
+                            if (distance_sqr > VIEW_DISTANCE_SQR) {
+                                inside = links[inside];
+                                continue;
+                            }
+                            if (Vector2DotProduct(boids[current].position, boids[inside].position) < VIEW_DOT_PRODUCT) {
+                                inside = links[inside];
+                                continue;
+                            }
+                            average_position = Vector2Add(average_position, boids[inside].position);
+                            average_direction = Vector2Add(average_direction, boids[inside].direction);
+                            count++;
+
+                            if (distance_sqr > AVOID_DISTANCE_SQR) {
+                                inside = links[inside];
+                                continue;
+                            }
+                            average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(boids[current].position, boids[inside].position), 1.0f / distance_sqr));
+                            separation_count++;
+
+                            inside = links[inside];
+                        }
+                    }
                 }
 
                 average_positions[current] = Vector2Scale(average_position, 1.0f / count);
@@ -277,6 +284,7 @@ int main(void)
             /*DrawCircleLinesV(boids[i].position, AVOID_DISTANCE, BLUE);*/
             /*DrawLineV(boids[i].position, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), BLUE);*/
             /*DrawCircleV(boids[i].position, BOID_SIZE, MAGENTA);*/
+            /*DrawPixelV(boids[i].position, MAGENTA);*/
             DrawTriangleLines((Vector2) {boids[i].position.x - BOID_SIZE, boids[i].position.y + BOID_SIZE}, (Vector2) {boids[i].position.x + BOID_SIZE, boids[i].position.y + BOID_SIZE}, Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, AVOID_DISTANCE)), MAGENTA);
         }
         DrawCircleLinesV(area_position, area_radius, is_area_attract ? BLUE : RED);
