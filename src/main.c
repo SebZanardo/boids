@@ -6,20 +6,20 @@
 
 #define WINDOW_WIDTH 2048
 #define WINDOW_HEIGHT 1024
-#define MAX_FPS 0
+#define MAX_FPS 120
 
-#define NUM_BOIDS 100000
-#define BOID_SIZE 0.5
-#define VIEW_DISTANCE 4
+#define NUM_BOIDS 4096
+#define BOID_SIZE 4
+#define VIEW_DISTANCE 32
 #define VIEW_DISTANCE_SQR (VIEW_DISTANCE * VIEW_DISTANCE)
-#define AVOID_DISTANCE 1
+#define AVOID_DISTANCE 16
 #define AVOID_DISTANCE_SQR (AVOID_DISTANCE * AVOID_DISTANCE)
 #define VIEW_DOT_PRODUCT -0.6
 #define SEPARATION_CONSTANT 0.3
 #define ALIGNMENT_CONSTANT 0.1
 #define COHESION_CONSTANT 0.01
 #define AVOIDANCE_CONSTANT 10
-#define MOVE_SPEED 0.5
+#define MOVE_SPEED 1
 
 #define MAX_AREA_RADIUS 256
 #define AREA_SIZE_CHANGE 10
@@ -290,7 +290,7 @@ int main(void)
         DrawCircleLinesV(area_position, area_radius, is_area_attract ? BLUE : RED);
         EndDrawing();
 
-        DrawFPS(0, 0);
+        /*DrawFPS(0, 0);*/
     }
 
     CloseWindow();
