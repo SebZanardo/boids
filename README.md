@@ -2,7 +2,6 @@
 A 2D boid simulation I wrote in C using Raylib.  
 
 Grid spatial partitioning utilising a linked list for performance  
-(but without dynamic memory allocation :) ... huh?!)
 
 CONTROLS:  
 \<SCROLLWHEEL> Scale mouse cursor area of effect  
