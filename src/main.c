@@ -1,39 +1,47 @@
 // https://www.red3d.com/cwr/boids/
+#include <stdlib.h>
+#include <stdbool.h>
 #include "raylib.h"
 #include "raymath.h"
-#include <stdbool.h>
 
 
-#define WINDOW_WIDTH 2048
-#define WINDOW_HEIGHT 1024
-#define MAX_FPS 120
+const int WINDOW_WIDTH = 2049;
+const int WINDOW_HEIGHT = 1024;
+const int MAX_FPS = 120;
+const float FIXED_DT = 1.0f / MAX_FPS;
 
-#define NUM_BOIDS 4096
-#define BOID_SIZE 4
-#define VIEW_DISTANCE 32
-#define VIEW_DISTANCE_SQR (VIEW_DISTANCE * VIEW_DISTANCE)
-#define AVOID_DISTANCE 16
-#define AVOID_DISTANCE_SQR (AVOID_DISTANCE * AVOID_DISTANCE)
-#define VIEW_DOT_PRODUCT -0.6
-#define SEPARATION_CONSTANT 0.3
-#define ALIGNMENT_CONSTANT 0.1
-#define COHESION_CONSTANT 0.01
-#define AVOIDANCE_CONSTANT 10
-#define MOVE_SPEED 1
+const int NUM_BOIDS = 4096;
+const int BOID_SIZE = 4;
+const int VIEW_DISTANCE = 32;
+const int VIEW_DISTANCE_SQR = VIEW_DISTANCE * VIEW_DISTANCE;
+const int AVOID_DISTANCE = 8;
+const int AVOID_DISTANCE_SQR = AVOID_DISTANCE * AVOID_DISTANCE;
+const float VIEW_DOT_PRODUCT = -0.6f;
+const float SEPARATION_CONSTANT = 0.1f;
+const float ALIGNMENT_CONSTANT = 0.01f;
+const float COHESION_CONSTANT = 0.02f;
+const float ESCAPE_FACTOR = 10.0f;
+const float MOVE_SPEED = 100.0f;
 
-#define MAX_AREA_RADIUS 256
-#define AREA_SIZE_CHANGE 10
+// Stop updating boids if cells after depth reached
+const int MAX_CELL_DEPTH = 32;
+// Stop comparing to neighbours in surrounding cell after depth reached
+const int MAX_DEPTH = 32;
 
-#define GRID_HALF_SIZE VIEW_DISTANCE
-#define GRID_SIZE (GRID_HALF_SIZE * 2)
-#define GRID_WIDTH (WINDOW_WIDTH / GRID_SIZE)
-#define GRID_HEIGHT (WINDOW_HEIGHT / GRID_SIZE)
-#define GRID_CELLS (GRID_WIDTH * GRID_HEIGHT)
+const int MAX_AREA_RADIUS = 512;
+const int AREA_SIZE_CHANGE = 10;
+
+const int GRID_HALF_SIZE = VIEW_DISTANCE;
+const int GRID_SIZE = GRID_HALF_SIZE * 2;
+const int GRID_WIDTH = WINDOW_WIDTH / GRID_SIZE;
+const int GRID_HEIGHT = WINDOW_HEIGHT / GRID_SIZE;
+const int GRID_CELLS = GRID_WIDTH * GRID_HEIGHT;
 
 
 typedef struct {
     Vector2 position;
     Vector2 direction;
+    int next;
 } Boid;
 
 
@@ -45,7 +53,7 @@ int main(void)
 
     int area_radius = MAX_AREA_RADIUS / 2;
 
-    Boid boids[NUM_BOIDS] = {};
+    Boid *boids = (Boid *)malloc(sizeof(Boid) * NUM_BOIDS);
 
     // Using a linked list would make using SIMD impossible but, hopefully,
     //  should heavily reduce number of collision checks between boids from.
@@ -53,8 +61,7 @@ int main(void)
     //  time: O(n), space: O(n) but n's of higher magnitudes
     // An alternative or addition to this would be multithreading but I would
     //  like to keep processing to one thread for compatability and simplicity.
-    int links[NUM_BOIDS] = {};
-    int link_heads[GRID_CELLS] = {};
+    int *link_heads = (int *)malloc(sizeof(int) * GRID_CELLS);
 
     // Setting up boids lists
     for (int i = 0; i < GRID_CELLS; i++) {
@@ -70,18 +77,22 @@ int main(void)
             GetRandomValue(-64, 64),
             GetRandomValue(-64, 64)
         });
-        boids[i] = (Boid) {position, direction};
+        boids[i] = (Boid) {position, direction, -1};
 
         int x_grid = (int) position.x / GRID_SIZE;
+        x_grid = Wrap(x_grid, 0, GRID_WIDTH);
+
         int y_grid = (int) position.y / GRID_SIZE;
+        y_grid = Wrap(y_grid, 0, GRID_HEIGHT);
+
         int i_grid = y_grid * GRID_WIDTH + x_grid;
 
         if (link_heads[i_grid] == -1) {
+            // There is no head of the list for this grid cell
             link_heads[i_grid] = i;
-            links[i] = -1;
         } else {
-            // Insert at head because easier
-            links[i] = link_heads[i_grid];
+            // Insert node as new head
+            boids[i].next = link_heads[i_grid];
             link_heads[i_grid] = i;
         }
     }
@@ -90,9 +101,9 @@ int main(void)
     Vector2 area_position = offscreen;
     bool is_area_attract = false;
 
-    Vector2 average_positions[NUM_BOIDS] = {};
-    Vector2 average_directions[NUM_BOIDS] = {};
-    Vector2 average_separations[NUM_BOIDS] = {};
+    Vector2 *average_positions = (Vector2 *)malloc(sizeof(Vector2) * NUM_BOIDS);
+    Vector2 *average_directions = (Vector2 *)malloc(sizeof(Vector2) * NUM_BOIDS);
+    Vector2 *average_separations = (Vector2 *)malloc(sizeof(Vector2) * NUM_BOIDS);
 
     while (!WindowShouldClose()) {
         // Update area
@@ -116,10 +127,16 @@ int main(void)
             if (link_heads[i] == -1) continue;
 
             int current = link_heads[i];
+            int cell_depth = 0;
             while (current != -1) {
+                cell_depth++;
+                if (cell_depth > MAX_CELL_DEPTH) break;
+
                 // Calculate surrounding grid cells
                 int x_grid = (int) boids[current].position.x / GRID_SIZE;
+                x_grid = Wrap(x_grid, 0, GRID_WIDTH);
                 int y_grid = (int) boids[current].position.y / GRID_SIZE;
+                y_grid = Wrap(y_grid, 0, GRID_HEIGHT);
 
                 int remaining_x = (int) boids[current].position.x - x_grid * GRID_SIZE;
                 int remaining_y = (int) boids[current].position.y - y_grid * GRID_SIZE;
@@ -148,19 +165,22 @@ int main(void)
                         if (cell_to_check < 0 || cell_to_check >= GRID_CELLS) continue;
 
                         int inside = link_heads[cell_to_check];
+                        int depth = 0;
                         while ((inside != -1)) {
+                            depth++;
+                            if (depth > MAX_DEPTH) break;
                             if (inside == current) {
-                                inside = links[inside];
+                                inside = boids[inside].next;
                                 continue;
                             }
 
                             float distance_sqr = Vector2DistanceSqr(boids[current].position, boids[inside].position);
                             if (distance_sqr > VIEW_DISTANCE_SQR) {
-                                inside = links[inside];
+                                inside = boids[inside].next;
                                 continue;
                             }
                             if (Vector2DotProduct(boids[current].position, boids[inside].position) < VIEW_DOT_PRODUCT) {
-                                inside = links[inside];
+                                inside = boids[inside].next;
                                 continue;
                             }
                             average_position = Vector2Add(average_position, boids[inside].position);
@@ -168,13 +188,13 @@ int main(void)
                             count++;
 
                             if (distance_sqr > AVOID_DISTANCE_SQR) {
-                                inside = links[inside];
+                                inside = boids[inside].next;
                                 continue;
                             }
                             average_separation = Vector2Subtract(average_separation, Vector2Scale(Vector2Subtract(boids[current].position, boids[inside].position), 1.0f / distance_sqr));
                             separation_count++;
 
-                            inside = links[inside];
+                            inside = boids[inside].next;
                         }
                     }
                 }
@@ -183,82 +203,81 @@ int main(void)
                 average_directions[current] = Vector2Normalize(Vector2Scale(average_direction, 1.0f / count));
                 average_separations[current] = Vector2Normalize(Vector2Scale(average_separation, 1.0f / separation_count));
 
-                current = links[current];
+                current = boids[current].next;
             }
         }
 
-        // Move the boids
-        for (int i = 0; i < NUM_BOIDS; i++) {
-            // Separation
-            Vector2 separation = Vector2Scale(Vector2Normalize(Vector2Subtract(average_separations[i], boids[i].direction)), -SEPARATION_CONSTANT);
 
-            // Alignment
-            Vector2 alignment = Vector2Scale(Vector2Normalize(Vector2Subtract(average_directions[i], boids[i].direction)), ALIGNMENT_CONSTANT);
-
-            // Cohension
-            Vector2 cohesion = Vector2Scale(Vector2Normalize(Vector2Subtract(average_positions[i], boids[i].position)), COHESION_CONSTANT);
-
-            // Avoidance
-            float distance_sqr = Vector2DistanceSqr(boids[i].position, area_position);
-            Vector2 avoidance = Vector2Zero();
-            if (distance_sqr < area_radius * area_radius + AVOID_DISTANCE_SQR) {
-                avoidance = Vector2Scale(Vector2Subtract(boids[i].position, area_position), 1.0f / distance_sqr * AVOIDANCE_CONSTANT);
-                if (is_area_attract) avoidance = Vector2Negate(avoidance);
-            }
-
-            boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, separation));
-            boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, alignment));
-            boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, cohesion));
-            boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, avoidance));
-
-            // Update position
-            boids[i].position = Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, MOVE_SPEED));
-
-            boids[i].position.x = Wrap(boids[i].position.x, 0, WINDOW_WIDTH);
-            boids[i].position.y = Wrap(boids[i].position.y, 0, WINDOW_HEIGHT);
-        }
+        int escape_distance_sqr = area_radius * area_radius + AVOID_DISTANCE_SQR;
 
         // Update boids linked list
-        for (int i = 0; i < GRID_CELLS; i++) {
-            if (link_heads[i] == -1) continue;
+        for (int cell = 0; cell < GRID_CELLS; cell++) {
+            if (link_heads[cell] == -1) continue;
 
-            int current = link_heads[i];
-            while (current != -1) {
-                int x_grid = (int) boids[current].position.x / GRID_SIZE;
-                int y_grid = (int) boids[current].position.y / GRID_SIZE;
+            int last = -1;
+            int i = link_heads[cell];
+            while (i != -1) {
+                // Move boids
+                // Separation
+                Vector2 separation = Vector2Scale(Vector2Normalize(Vector2Subtract(average_separations[i], boids[i].direction)), -SEPARATION_CONSTANT);
+
+                // Alignment
+                Vector2 alignment = Vector2Scale(Vector2Normalize(Vector2Subtract(average_directions[i], boids[i].direction)), ALIGNMENT_CONSTANT);
+
+                // Cohension
+                Vector2 cohesion = Vector2Scale(Vector2Normalize(Vector2Subtract(average_positions[i], boids[i].position)), COHESION_CONSTANT);
+
+                // Avoidance
+                Vector2 avoidance = Vector2Zero();
+                float distance_sqr = Vector2DistanceSqr(boids[i].position, area_position);
+                if (distance_sqr < escape_distance_sqr) {
+                    avoidance = Vector2Scale(Vector2Subtract(boids[i].position, area_position), 1.0f / distance_sqr * ESCAPE_FACTOR);
+                    if (is_area_attract) avoidance = Vector2Negate(avoidance);
+                }
+
+                // Update position & direction
+                boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, separation));
+                boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, alignment));
+                boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, cohesion));
+                boids[i].direction = Vector2Normalize(Vector2Add(boids[i].direction, avoidance));
+                boids[i].position = Vector2Add(boids[i].position, Vector2Scale(boids[i].direction, MOVE_SPEED * FIXED_DT));
+
+                boids[i].position.x = Wrap(boids[i].position.x, 0, WINDOW_WIDTH);
+                boids[i].position.y = Wrap(boids[i].position.y, 0, WINDOW_HEIGHT);
+
+                // Does this boid need to move cells?
+                int x_grid = (int) boids[i].position.x / GRID_SIZE;
+                x_grid = Wrap(x_grid, 0, GRID_WIDTH);
+                int y_grid = (int) boids[i].position.y / GRID_SIZE;
+                y_grid = Wrap(y_grid, 0, GRID_HEIGHT);
                 int i_grid = y_grid * GRID_WIDTH + x_grid;
 
                 // Boid still in valid grid cell
-                if (i == i_grid) {
-                    current = links[current];
+                if (cell == i_grid) {
+                    last = i;
+                    i = boids[i].next;
                     continue;
                 }
 
                 // We gotta move the boid from this linked list to another
                 // Move to head of other linked list for simplicity
 
+                int old_next = boids[i].next;
+
                 // Move head
-                if (current == link_heads[i]) {
-                    link_heads[i] = links[current];
-
-                    // Current points to new head
-                    links[current] = link_heads[i_grid];
-                    // Head is now current of correct grid cell
-                    link_heads[i_grid] = current;
-
-                    current = link_heads[i];
+                if (i == link_heads[cell]) {
+                    // Head now points to next element
+                    link_heads[cell] = boids[i].next;
                 } else {
-                    int old = links[current];
-                    // Patch up link, set current to be next
-                    links[current] = links[old];
-
-                    // Redundant link points to new head, -1 is fine.
-                    links[old] = link_heads[i_grid];
-                    // Head is now current of correct grid cell
-                    link_heads[i_grid] = old;
-
-                    current = links[current];
+                    // Last node point to current's next node
+                    boids[last].next = boids[i].next;
                 }
+
+                // Assign removed node to be new head of correct cell
+                boids[i].next = link_heads[i_grid];
+                link_heads[i_grid] = i;
+
+                i = old_next;
             }
         }
 
@@ -266,17 +285,17 @@ int main(void)
         BeginDrawing();
         ClearBackground(BLACK);
         // Draw grid
-        /*for (int y = 0; y < GRID_HEIGHT; y++) {*/
-        /*    for (int x = 0; x < GRID_WIDTH; x++) {*/
-        /*        Rectangle rect = (Rectangle) {*/
-        /*            x * GRID_SIZE,*/
-        /*            y * GRID_SIZE,*/
-        /*            GRID_SIZE,*/
-        /*            GRID_SIZE*/
-        /*        };*/
-        /*        DrawRectangleLinesEx(rect, 1, WHITE);*/
-        /*    }*/
-        /*}*/
+        for (int y = 0; y < GRID_HEIGHT; y++) {
+            for (int x = 0; x < GRID_WIDTH; x++) {
+                Rectangle rect = (Rectangle) {
+                    x * GRID_SIZE,
+                    y * GRID_SIZE,
+                    GRID_SIZE,
+                    GRID_SIZE
+                };
+                DrawRectangleLinesEx(rect, 1, DARKGRAY);
+            }
+        }
 
         // Draw boids
         for (int i = 0; i < NUM_BOIDS; i++) {
@@ -290,8 +309,14 @@ int main(void)
         DrawCircleLinesV(area_position, area_radius, is_area_attract ? BLUE : RED);
         EndDrawing();
 
-        /*DrawFPS(0, 0);*/
+        DrawFPS(4, 4);
     }
+
+    free(boids);
+    free(link_heads);
+    free(average_positions);
+    free(average_directions);
+    free(average_separations);
 
     CloseWindow();
 
